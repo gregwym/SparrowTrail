@@ -10,8 +10,15 @@
 @interface Game ()
 
 - (void)setup;
+- (BOOL)isCollidingBetween:(SPDisplayObject *)obj1 and:(SPDisplayObject *)obj2;
+- (void)addRunnerToSprite:(SPSprite *)sprite atX:(float)x andY:(float)y;
+- (void)addTowerToSprite:(SPSprite *)sprite atX:(float)x andY:(float)y;
+- (void)onBackgroundTouched:(SPTouchEvent *)event;
 - (void)onImageTouched:(SPTouchEvent *)event;
 - (void)onResize:(SPResizeEvent *)event;
+
+@property (strong, nonatomic) SPSprite *contents;
+@property (strong, nonatomic) NSMutableSet *towers;
 
 @end
 
@@ -19,9 +26,8 @@
 // --- class implementation ------------------------------------------------------------------------
 
 @implementation Game
-{
-    SPSprite *_contents;
-}
+
+@synthesize contents = _contents;
 
 - (id)init
 {
@@ -58,42 +64,23 @@
     
     // Create some placeholder content: a background image, the Sparrow logo, and a text field.
     // The positions are updated when the device is rotated. To make that easy, we put all objects
-    // in one sprite (_contents): it will simply be rotated to be upright when the device rotates.
+    // in one sprite (self.contents): it will simply be rotated to be upright when the device rotates.
 
-    _contents = [SPSprite sprite];
-    [self addChild:_contents];
+    self.contents = [SPSprite sprite];
+    [self addChild:self.contents];
+
+	self.towers = [[NSMutableSet alloc] init];
 
     SPImage *background = [[SPImage alloc] initWithContentsOfFile:@"background.jpg"];
-    [_contents addChild:background];
-    
-    NSString *text = @"To find out how to create your own game out of this scaffold, "
-                     @"have a look at the 'First Steps' section of the Sparrow website!";
-    
-    SPTextField *textField = [[SPTextField alloc] initWithWidth:280 height:80 text:text];
-    textField.x = (background.width - textField.width) / 2;
-    textField.y = (background.height / 2) - 135;
-    [_contents addChild:textField];
+	background.width = Sparrow.stage.width;
+	background.height = Sparrow.stage.height;
+    [self.contents addChild:background];
 
-    SPImage *image = [[SPImage alloc] initWithTexture:[Media atlasTexture:@"sparrow"]];
-    image.pivotX = (int)image.width  / 2;
-    image.pivotY = (int)image.height / 2;
-    image.x = background.width  / 2;
-    image.y = background.height / 2 + 40;
-    [_contents addChild:image];
+	[background addEventListener:@selector(onBackgroundTouched:) atObject:self forType:SP_EVENT_TYPE_TOUCH];
+    
+    [self addRunnerToSprite:self.contents atX:-40 andY:background.height / 2 + 40];
     
     [self updateLocations];
-    
-    // play a sound when the image is touched
-    [image addEventListener:@selector(onImageTouched:) atObject:self forType:SP_EVENT_TYPE_TOUCH];
-    
-    // and animate it a little
-    SPTween *tween = [SPTween tweenWithTarget:image time:1.5 transition:SP_TRANSITION_EASE_IN_OUT];
-    [tween animateProperty:@"y" targetValue:image.y + 30];
-    [tween animateProperty:@"rotation" targetValue:0.1];
-    tween.repeatCount = 0; // repeat indefinitely
-    tween.reverse = YES;
-    [Sparrow.juggler addObject:tween];
-    
 
     // The controller autorotates the game to all supported device orientations. 
     // Choose the orienations you want to support in the Xcode Target Settings ("Summary"-tab).
@@ -116,13 +103,98 @@
     // Sparrow's minimum deployment target is iOS 5.
 }
 
+- (BOOL)isCollidingBetween:(SPDisplayObject *)obj1 and:(SPDisplayObject *)obj2
+{
+	SPPoint *p1 = [SPPoint pointWithX:obj1.x y:obj1.y];
+	SPPoint *p2 = [SPPoint pointWithX:obj2.x y:obj2.y];
+
+	float distance = [SPPoint distanceFromPoint:p1 toPoint:p2];
+	float radius1 = obj1.width / 2;
+	float radius2 = obj2.width / 2;
+
+	if (distance < radius1 + radius2) {
+
+//	SPRectangle *bounds1 = [obj1 boundsInSpace:self.contents];
+//	SPRectangle *bounds2 = [obj2 boundsInSpace:self.contents];
+//	if ([bounds1 intersectsRectangle:bounds2]) {
+		return TRUE;
+	}
+	return FALSE;
+}
+
+- (SPSprite *)wrappedSparrow
+{
+	SPImage *image = [[SPImage alloc] initWithTexture:[Media atlasTexture:@"sparrow"]];
+	SPSprite *sprite = [SPSprite sprite];
+	image.x = image.width / -2.0f;
+	image.y = image.height / -2.0f;
+	[sprite addChild:image];
+
+	return sprite;
+}
+
+- (void)addRunnerToSprite:(SPSprite *)sprite atX:(float)x andY:(float)y
+{
+	SPDisplayObject *image = [self wrappedSparrow];
+	image.height = image.height / 5;
+	image.width = image.width / 5;
+    image.x = x;
+    image.y = y;
+    [sprite addChild:image];
+
+	// play a sound when the image is touched
+    [image addEventListener:@selector(onImageTouched:) atObject:self forType:SP_EVENT_TYPE_TOUCH];
+
+    // and animate it a little
+    SPTween *tween = [SPTween tweenWithTarget:image time:10 transition:SP_TRANSITION_LINEAR];
+    [tween animateProperty:@"x" targetValue:self.contents.width];
+    tween.repeatCount = 1; // repeat indefinitely
+    tween.reverse = NO;
+	tween.onComplete = ^(void){
+		[Sparrow.juggler removeObjectsWithTarget:image];
+		[sprite removeChild:image];
+	};
+	tween.onUpdate = ^(void){
+		for (SPDisplayObject *tower in self.towers) {
+			if ([self isCollidingBetween:tower and:image]) {
+				[Sparrow.juggler removeObjectsWithTarget:image];
+			}
+		}
+	};
+    [Sparrow.juggler addObject:tween];
+}
+
+- (void)addTowerToSprite:(SPSprite *)sprite atX:(float)x andY:(float)y
+{
+	SPDisplayObject *image = [self wrappedSparrow];
+	image.height = image.height / 5;
+	image.width = image.width / 5;
+    image.x = x;
+    image.y = y;
+	image.scaleX = -0.2;
+    [sprite addChild:image];
+
+	[self.towers addObject:image];
+}
+
 - (void)updateLocations
 {
-    int gameWidth  = Sparrow.stage.width;
-    int gameHeight = Sparrow.stage.height;
-    
-    _contents.x = (int) (gameWidth  - _contents.width)  / 2;
-    _contents.y = (int) (gameHeight - _contents.height) / 2;
+	self.contents.x = 0;
+	self.contents.y = 0;
+}
+
+- (void)onBackgroundTouched:(SPTouchEvent *)event
+{
+	for (SPTouch *touch in event.touches) {
+		if (touch.phase != SPTouchPhaseEnded) {
+			SPPoint *touchPoint = [touch locationInSpace:self.contents];
+			if (touchPoint.x > self.contents.width / 2) {
+				[self addTowerToSprite:self.contents atX:touchPoint.x andY:touchPoint.y];
+			} else {
+				[self addRunnerToSprite:self.contents atX:touchPoint.x andY:touchPoint.y];
+			}
+		}
+	}
 }
 
 - (void)onImageTouched:(SPTouchEvent *)event
